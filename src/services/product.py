@@ -1,0 +1,38 @@
+from sqlalchemy.ext.asyncio import AsyncSession
+from src.config.llm_config import llm_embedding
+from src.schemas.product import ProductCreateRequest,ProductSearchRequest
+from src.models.product import Product
+from src.database.database import database
+
+class ProductService:
+    def __init__(self):
+        self.llm_config = llm_embedding
+
+    async def create_product(self, db: AsyncSession, request : ProductCreateRequest):
+        product_text = f"""
+        Product Name: {request.name}
+        Description: {request.description}
+        Brand: {request.brand}
+        Category: {request.category}
+        """
+
+        embedding = await self.llm_config.create_embeddings(product_text)
+        product = Product(
+            name=request.name,
+            description=request.description,
+            brand=request.brand,
+            category=request.category,
+            price=request.price,
+            stock=request.stock,
+            embedding=embedding
+        )
+        return await database.create(db, product)
+    async def search_products(self,db:AsyncSession , request : ProductSearchRequest):
+        search_embedding = await self.llm_config.create_embeddings(request.query)
+        products = await database.search_products(db,Product,search_embedding,request)
+
+        return products
+
+    
+product_service = ProductService()
+
