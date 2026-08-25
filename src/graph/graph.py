@@ -4,6 +4,20 @@ from src.graph.state import EcommerceState
 from src.graph.nodes import  nodes_graph
 
 
+def route_by_intent(state: EcommerceState):
+
+        intent = state["intent"]
+
+        if intent == "product_search":
+            return "understand_query"
+
+        if intent == "add_to_cart":
+            return "extract_cart_request"
+
+        if intent == "buy_product":
+            return "extract_buy_request"
+
+        return "general"
 
 def route_after_search(state: EcommerceState):
 
@@ -17,35 +31,71 @@ def route_after_search(state: EcommerceState):
 
 
     return "generate_response"
-def route_by_intent(state: EcommerceState):
 
-    intent = state["intent"]
+def route_after_product(state: EcommerceState):
+    products = state.get("products", [])
 
-    if intent == "product_search":
-        return "understand_query"
+    if not products:
+        return "fallback"
 
-    return "general"
+    if state["intent"] == "add_to_cart":
+        return "add_product_to_cart"
+
+    if state["intent"] == "buy_product":
+        return "create_order"
+
+    return "fallback"
 
 def create_graph():
     graph = StateGraph(EcommerceState)
+    graph.add_node(  "route_intent", nodes_graph.route_intent )
     graph.add_node("understand_query",nodes_graph.understand_query)
     graph.add_node("search_products",nodes_graph.search_products)
+    graph.add_node("extract_cart_request",nodes_graph.extract_cart_request)
     graph.add_node("generate_response",nodes_graph.generate_response)
     graph.add_node("fallback",nodes_graph.fallback)
     graph.add_node("limited_results",nodes_graph.limited_results)
-
-    graph.add_edge(START ,"understand_query" )
-    graph.add_edge("understand_query", "search_products")
-    graph.add_conditional_edges( "search_products",  route_after_search,
+    graph.add_node("find_product", nodes_graph.find_product)
+    graph.add_node("add_product_to_cart", nodes_graph.add_product_to_cart)
+    graph.add_node("extract_buy_request", nodes_graph.extract_buy_request)
+    graph.add_node( "create_order",  nodes_graph.create_order)
+    graph.add_node("general", nodes_graph.general)
+    
+    graph.add_edge(START ,"route_intent")
+    graph.add_conditional_edges( "route_intent",  route_by_intent,
     {
-        "generate_response": "generate_response",
-        "limited_results": "limited_results",
-        "fallback": "fallback"
-     }
+        "understand_query": "understand_query",
+        "extract_cart_request": "extract_cart_request",
+        "extract_buy_request": "extract_buy_request",
+        "general": "general"
+        }
     )
+    graph.add_edge("understand_query", "search_products")
+    graph.add_conditional_edges(
+        "search_products",
+        route_after_search,
+        {
+            "generate_response": "generate_response",
+            "limited_results": "limited_results",
+            "fallback": "fallback"
+        }
+    )
+    graph.add_edge( "extract_cart_request",  "find_product")
+    graph.add_conditional_edges( "find_product", route_after_product, 
+        {
+        "add_product_to_cart": "add_product_to_cart",
+        "create_order": "create_order",
+        "fallback": "fallback"
+    })
+    graph.add_edge("add_product_to_cart",END)
+    graph.add_edge("extract_buy_request","find_product")
+
+    graph.add_edge("general",END)
+    graph.add_edge("generate_response",END)
+   
     graph.add_edge("fallback",END)
     graph.add_edge("limited_results", END)
-    graph.add_edge("generate_response",END)
+ 
 
     return graph.compile()
 

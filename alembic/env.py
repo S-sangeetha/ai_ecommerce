@@ -2,6 +2,8 @@ from logging.config import fileConfig
 from src.database.database import Base
 from src.models.user import User
 from src.models.product import Product
+from src.models.order import Order
+
 from src.models.cart import Cart, CartItem
 from dotenv import load_dotenv
 import os

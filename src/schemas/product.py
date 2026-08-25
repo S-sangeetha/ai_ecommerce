@@ -1,5 +1,6 @@
 from pydantic import BaseModel, Field,ConfigDict
 from datetime import datetime
+from typing import Optional
 
 
 class ProductCreateRequest(BaseModel):
@@ -12,11 +13,16 @@ class ProductCreateRequest(BaseModel):
     category: str
     
 class ProductSearchRequest(BaseModel):
-    query : str
-    brand :str
-    category :str
-    max_price : float
-    limit : int = 5
+
+    query: str
+
+    brand: str | None = None
+
+    category: str | None = None
+
+    max_price: float | None = None
+
+    limit: int = 5 
 
 
 class ProductResponse(BaseModel):

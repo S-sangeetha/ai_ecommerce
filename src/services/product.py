@@ -2,7 +2,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config.llm_config import llm_embedding
 from src.schemas.product import ProductCreateRequest,ProductSearchRequest
 from src.models.product import Product
-from src.database.database import database
+from src.database.database import database_service
 
 class ProductService:
     def __init__(self):
@@ -26,12 +26,18 @@ class ProductService:
             stock=request.stock,
             embedding=embedding
         )
-        return await database.create(db, product)
+        return await database_service.create(db, product)
+    
     async def search_products(self,db:AsyncSession , request : ProductSearchRequest):
         search_embedding = await self.llm_config.create_embeddings(request.query)
-        products = await database.search_products(db,Product,search_embedding,request)
+        products = await database_service.search_products(db,Product,search_embedding,request)
 
-        return products
+        print("SEARCH RESULTS:", products)
+        print("RESULT COUNT:", len(products))
+
+        return {
+        "products": products
+    }
 
     
 product_service = ProductService()
