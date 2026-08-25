@@ -104,3 +104,33 @@ ai_ecommerce/
 ├── alembic.ini
 └── README.md
 
+# 🛒 AI Ecommerce — Intelligent Shopping Assistant
+
+An **AI-powered Ecommerce backend** built with **FastAPI, PostgreSQL, pgvector, Google Gemini, LangChain, and LangGraph**.
+
+This project combines traditional ecommerce functionality with **AI-powered product search and conversational shopping**.
+
+Instead of forcing users to interact with multiple APIs manually, users can simply type requests such as:
+
+> "Show me a Dell laptop under ₹50,000"
+
+> "Add 2 Dell Inspiron 15 to my cart"
+
+> "Buy 1 HP laptop"
+
+The AI understands the user's intent, finds the relevant product, adds it to the cart, or places the order through a **LangGraph-based workflow**.
+
+---
+
+## 🚀 What Makes This Project Different?
+
+This is not just a traditional ecommerce API.
+
+The application uses an **AI Agent workflow** to understand what the user wants and decide what action should happen next.
+
+### Example
+
+User:
+
+```text
+Add 2 Dell Inspiron 15 to my cart
