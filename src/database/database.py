@@ -49,7 +49,7 @@ class Database:
         result =  query.order_by(model.embedding.cosine_distance(embeddings)).limit(request.limit)
         result = await db.execute(query)
         products =  result.scalars().all()
-       
+        print(products)
         return products
 
     async def add_to_cart(self,db:AsyncSession,user_id: int ,product_id: int, quantity: int  , cart_model , cart_item_model, product_model):

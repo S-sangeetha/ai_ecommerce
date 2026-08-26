@@ -10,7 +10,8 @@ class ProductQuery(BaseModel):
 class ChatRequest(BaseModel):
     message: str
 
-
 class ChatResponse(BaseModel):
     response: str
+    intent: str | None = None
+    data: dict = {} 
 

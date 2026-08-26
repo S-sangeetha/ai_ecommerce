@@ -14,15 +14,24 @@ async def chat(
     request: ChatRequest,
     db: AsyncSession = Depends(database_service.get_db)
 ):
-        result = await ecommerce_graph.ainvoke({
+        result = await ecommerce_graph.ainvoke(
+    {
         "user_query": request.message,
         "user_id": 1,
+        "intent": "",
+        "product_query": None,
+        "quantity": 1,
         "filters": {},
         "products": [],
+        "product_id": None,
         "response": "",
-        "db": db
-      })
+        "data": {}
+    },
+    context={"db": db}
+)
 
         return {
-        "response": result["response"]
+        "response": result["response"],
+        "intent": result.get("intent"),
+         "data": result.get("data", {})
          } 
