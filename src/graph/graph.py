@@ -23,12 +23,11 @@ def route_after_search(state: EcommerceState):
 
     products = state["products"]
 
-    if len(products) == 0:
+    if not products:
         return "fallback"
 
     if len(products) < 3:
         return "limited_results"
-
 
     return "generate_response"
 

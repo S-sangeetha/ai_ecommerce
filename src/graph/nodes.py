@@ -90,7 +90,7 @@ class nodes:
         return {
         "intent": result.intent,
         "product_query": result.product_query,
-        "quantity": result.quantity,
+        "quantity": result.quantity if result.quantity > 0 else 1,
         "filters": {
             "query": result.product_query,
             "brand": result.brand,
@@ -111,7 +111,20 @@ class nodes:
         
         result  = await product_service.search_products(db = db , request= request)
         products = result["products"]
-        return {"products": products}
+        product_data = [
+            {
+                "id": product.id,
+                "name": product.name,
+                "description": product.description,
+                "brand": product.brand,
+                "category": product.category,
+                "price": float(product.price),
+                "stock": product.stock
+            }
+            for product in products
+]
+
+        return {"products": product_data}
 
     
     async def generate_response(self , state: EcommerceState):
@@ -124,13 +137,11 @@ class nodes:
         product_details  = "\n".join(
             [
                 f"""
-                 Product: {product.name}
-                 Description: {product.description}
-                 Brand: {product.brand}
-                 Category: {product.category} 
-                 Price: ₹{product.price}
-                 Stock: {product.stock}
-                """
+                Product: {product["name"]}
+                Brand: {product["brand"]}
+                Category: {product["category"]}
+                Price: ₹{product["price"]}
+                Stock: {product["stock"]}                """
                 for product in products
             ]
         )
@@ -148,8 +159,21 @@ class nodes:
         - Mention the product name and price.
         """
         response = await llm_embedding.llm.ainvoke(prompt)
+        if isinstance(response.content, list):
+            response_text = "".join(
+                block.get("text", "")
+                for block in response.content
+                if isinstance(block, dict)
+        )
+        else:
+             response_text = str(response.content)
         print("LLM RESPONSE:", repr(response.content))
-        return { "response": response.content}
+        return { "response":response_text ,
+                "data": {
+                    "action": "product_search",
+            "count": len(products),
+            "products": products
+        }}
 
     
     async def fallback(self, state: EcommerceState):
@@ -164,13 +188,30 @@ class nodes:
 
         products = state["products"]
 
+        if not products:
+            return {
+                "response": "Sorry, I couldn't find any products matching your requirements.",
+                "data": {
+                    "count": 0,
+                    "products": []
+                }
+            }
+
+        product_list = "\n".join(
+            f"- {product['name']} — {product['brand']}"
+            for product in products
+        )
+
         return {
             "response": (
-                f"I found only {len(products)} products "
-                "matching your requirements."
-            )
+                f"I found {len(products)} products:\n\n"
+                f"{product_list}"
+            ),
+            "data": {
+                "count": len(products),
+                "products": products
+            }
         }
-    
     async def route_intent(self, state: EcommerceState):
 
         user_query = state["user_query"]
@@ -253,12 +294,24 @@ class nodes:
 
 
         filters = state["filters"]
-
+        print("FIND PRODUCT FILTERS:", filters)
+        print("FIND PRODUCT QUERY:", filters.get("query"))
+        if not filters.get("query"):
+            return {
+                "products": [],
+                "response": "Please include the product name when placing an order."
+            }
         request = ProductSearchRequest(
             query=filters["query"],
             limit=1
         )
-
+        request = ProductSearchRequest(
+        query=filters.get("query"),
+        brand=filters.get("brand"),
+        category=filters.get("category"),
+        max_price=filters.get("max_price"),
+        limit=1
+    )
         result  = await product_service.search_products(
             db=db,
             request=request
@@ -324,13 +377,16 @@ class nodes:
                 "response": str(e)
             }
     async def create_order(self, state: EcommerceState,runtime):
-            
-        order = await cart_service.create_order(
-            db = runtime.context["db"],
-            user_id=state["user_id"],
-            product_id=state["product_id"],
-            quantity=state["quantity"]
-        )
+        try:
+            order = await cart_service.create_order(
+                db=runtime.context["db"],
+                user_id=state["user_id"],
+                product_id=state["product_id"],
+                quantity=state["quantity"]
+            )
+        except ValueError as error:
+            return {"response": str(error)}
+
         product = state["products"][0]
 
         total = product["price"] * state["quantity"]
