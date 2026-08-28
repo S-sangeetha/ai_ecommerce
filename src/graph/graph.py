@@ -16,7 +16,8 @@ def route_by_intent(state: EcommerceState):
 
         if intent == "buy_product":
             return "buy_product"
-
+        if intent == "get_cart":
+          return "get_cart"
         return "general"
 
 def route_after_search(state: EcommerceState):
@@ -26,10 +27,7 @@ def route_after_search(state: EcommerceState):
     if not products:
         return "fallback"
 
-    if len(products) < 3:
-        return "limited_results"
-
-    return "generate_response"
+    return "limited_results"
 
 def route_after_product(state: EcommerceState):
     products = state.get("products", [])
@@ -65,6 +63,10 @@ def create_graph():
     graph.add_node(
         "add_product_to_cart",
         nodes_graph.add_product_to_cart
+    )
+    graph.add_node(
+        "get_cart",
+        nodes_graph.get_cart
     )
 
     graph.add_node(
@@ -106,6 +108,7 @@ def create_graph():
             "product_search": "search_products",
             "add_to_cart": "find_product",
             "buy_product": "find_product",
+            "get_cart": "get_cart",
             "general": "general"
         }
     )
@@ -115,7 +118,6 @@ def create_graph():
         "search_products",
         route_after_search,
         {
-            "generate_response": "generate_response",
             "limited_results": "limited_results",
             "fallback": "fallback"
         }
@@ -133,7 +135,7 @@ def create_graph():
     )
 
 
-    graph.add_edge("generate_response", END)
+    # graph.add_edge("generate_response", END)
     graph.add_edge("limited_results", END)
     graph.add_edge("fallback", END)
     graph.add_edge("general", END)

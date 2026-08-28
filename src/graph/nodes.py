@@ -41,50 +41,70 @@ class nodes:
         user_query  = state['user_query']
         result = await request_llm.ainvoke(
 
-              f"""
-        You are an ecommerce request understanding system.
+              f"""Extract structured information from this ecommerce request.
 
-        Analyze the user's request and determine the intent.
+                Intent MUST be exactly one of these values:
+                - product_search
+                - add_to_cart
+                - buy_product
+                - get_cart
+                - general
 
-        Possible intents:
+                Intent definitions:
 
-        1. product_search
-           User wants to find, search, compare or see products.
+                product_search:
+                User wants to search, find, compare, or browse products.
 
-        2. add_to_cart
-           User wants to add a product to their shopping cart.
+                add_to_cart:
+                User wants to add a product to their cart.
 
-        3. buy_product
-           User wants to purchase or order a product.
+                buy_product:
+                User wants to directly purchase a product.
 
-        4. general
-           General conversation that is not a product search,
-           cart action or purchase.
+                get_cart:
+                User wants to view their existing shopping cart.
 
-        Extract the following when applicable:
+                Examples of get_cart:
+                - Show my cart
+                - View my cart
+                - What's in my cart?
+                - What is in my cart?
+                - Show cart
+                - View cart
+                - Cart
 
-        - product_query
-        - quantity
-        - brand
-        - category
-        - max_price
+                general:
+                Anything unrelated to product search or shopping actions.
 
-        For product_search:
-        Extract brand, category, maximum price and the
-        semantic product query.
+                Extract:
+                - intent
+                - product_query
+                - quantity
+                - name
+                - brand
+                - category
+                - min_price
+                - max_price
 
-        For add_to_cart:
-        Extract the product name/query and quantity.
+                IMPORTANT:
+                - For get_cart, product_query must be null.
+                - For get_cart, name must be null.
+                - For get_cart, brand must be null.
+                - For get_cart, category must be null.
+                - For get_cart, min_price must be null.
+                - For get_cart, max_price must be null.
+                - Do not invent values.
 
-        For buy_product:
-        Extract the product name/query and quantity.
+                IMPORTANT:
+                - category must contain only the product type.
+                - product_query must contain only the meaningful
+                semantic requirement for product matching.
+                - Do not repeat brand, category, or price inside product_query.
+                - If there is no semantic requirement, set product_query to null.
 
-        For general:
-        product_query can be null.
-
-        User request:
-        {user_query}
-        """
+                User request:
+                {user_query}
+                """
         )
 
         return {
@@ -93,8 +113,10 @@ class nodes:
         "quantity": result.quantity if result.quantity > 0 else 1,
         "filters": {
             "query": result.product_query,
+            "name":result.name,
             "brand": result.brand,
             "category": result.category,
+            "min_price": result.min_price,
             "max_price": result.max_price
         }
         }
@@ -103,10 +125,11 @@ class nodes:
         db = runtime.context["db"]
         filters = state["filters"]
         request = ProductSearchRequest(
-        query=filters["query"],
-        brand=filters["brand"],
-        category=filters["category"],
-        max_price=filters["max_price"],
+        query=filters.get("query"),
+        name = filters.get("name"),
+        brand=filters.get("brand"),
+        category=filters.get("category"),
+        max_price=filters.get("max_price"),
         limit=5 )
         
         result  = await product_service.search_products(db = db , request= request)
@@ -192,15 +215,19 @@ class nodes:
             return {
                 "response": "Sorry, I couldn't find any products matching your requirements.",
                 "data": {
+                    "action": "product_search",
                     "count": 0,
                     "products": []
                 }
             }
 
         product_list = "\n".join(
-            f"- {product['name']} — {product['brand']}"
-            for product in products
-        )
+        f"{i + 1}. {product['name']} — "
+        f"₹{product['price']:,.2f} "
+        f"({product['brand']}) — "
+        f"Stock: {product['stock']}"
+        for i, product in enumerate(products)
+    )
 
         return {
             "response": (
@@ -284,9 +311,9 @@ class nodes:
             {user_query}
             """
         )
-
+        
         return {
-            "response": response.content
+            "response":  self.extract_text(response.content)
         }
     async def find_product(self, state: EcommerceState,runtime):
 
@@ -296,22 +323,22 @@ class nodes:
         filters = state["filters"]
         print("FIND PRODUCT FILTERS:", filters)
         print("FIND PRODUCT QUERY:", filters.get("query"))
-        if not filters.get("query"):
+        product_name = filters.get("name") or filters.get("query")
+
+        if not product_name:
             return {
                 "products": [],
                 "response": "Please include the product name when placing an order."
             }
         request = ProductSearchRequest(
-            query=filters["query"],
+            query=product_name,
+            brand=filters.get("brand"),
+            category=filters.get("category"),
+            min_price=filters.get("min_price"),
+            max_price=filters.get("max_price"),
             limit=1
         )
-        request = ProductSearchRequest(
-        query=filters.get("query"),
-        brand=filters.get("brand"),
-        category=filters.get("category"),
-        max_price=filters.get("max_price"),
-        limit=1
-    )
+ 
         result  = await product_service.search_products(
             db=db,
             request=request
@@ -376,6 +403,50 @@ class nodes:
             return {
                 "response": str(e)
             }
+
+    async def get_cart(self, state: EcommerceState,runtime):
+        db = runtime.context["db"]
+        items = await cart_service.get_cart(db=db,user_id=state["user_id"])
+        if not items :
+            return {
+            "response": "Your cart is empty.",
+            "data": {
+                "action": "get_cart",
+                "count": 0,
+                "items": [],
+                "total": 0
+            }
+        }
+        cart_items = []
+        total = 0
+        for cart_item, product in items:
+          item_total = float(product.price) * cart_item.quantity
+          total += item_total
+          cart_items.append({
+            "cart_item_id": cart_item.id,
+            "product_id": product.id,
+            "product_name": product.name,
+            "brand": product.brand,
+            "quantity": cart_item.quantity,
+            "price": float(product.price),
+            "item_total": item_total
+        })
+
+        return {
+            "response": (
+                f"You have {len(cart_items)} item(s) in your cart. "
+                f"Total: ₹{total:,.2f}"
+            ),
+            "data": {
+                "action": "get_cart",
+                "count": len(cart_items),
+                "items": cart_items,
+                "total": total
+            }
+        }
+    
+
+
     async def create_order(self, state: EcommerceState,runtime):
         try:
             order = await cart_service.create_order(
@@ -407,4 +478,16 @@ class nodes:
             "total": total
         }
         }
+    def extract_text(self,content):
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            return "".join(
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict)
+            )
+
+        return str(content)
 nodes_graph = nodes()

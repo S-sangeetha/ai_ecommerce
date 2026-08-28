@@ -27,14 +27,16 @@ class EcommerceRequest(BaseModel):
         "product_search",
         "add_to_cart",
         "buy_product",
+        "get_cart",
         "general"
     ]
 
     product_query: str | None = None
     quantity: int = 1
-
+    name :str |None = None
     brand: str | None = None
     category: str | None = None
+    min_price: float | None = None
     max_price: float | None = None
     
 
