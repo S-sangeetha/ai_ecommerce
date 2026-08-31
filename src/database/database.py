@@ -179,8 +179,66 @@ class Database:
             .join(cart_model, cart_item_model.cart_id == cart_model.id)
             .where(cart_model.user_id == user_id)
         )
+        await db.delete(cart_item_model)
+        await db.commit()
+        
+        return 
 
-        return result.all()   
+    async def clear_cart(self,db: AsyncSession,user_id: int,cart_model,cart_item_model ,product_model ):
+        result = await db.execute(
+            select(cart_item_model, product_model)
+            .join(product_model, cart_item_model.product_id == product_model.id)
+            .join(cart_model, cart_item_model.cart_id == cart_model.id)
+            .where(cart_model.user_id == user_id)
+        )
+
+        return result.all() 
+    
+    async def update_cart_quantity(self, db: AsyncSession, user_id: int,product_id: int,quantity: int,cart_model,cart_item_model,product_model):
+        if quantity <= 0:
+            raise ValueError("Quantity must be greater than 0")
+        
+        result = await db.execute(select(product_model).where(product_model.id == product_id) )
+        product = result.scalar_one_or_none()
+        if not product:
+            raise ValueError("Product not found")
+        if product.stock < quantity:
+            raise ValueError(f"Only {product.stock} units are available")
+        result = await db.execute(select(cart_model).where(cart_model.user_id == user_id))
+        cart = result.scalar_one_or_none()
+        if not cart:
+            raise ValueError("Your cart is empty")
+        result = await db.execute(select(cart_item_model).where(cart_item_model.cart_id == cart.id,cart_item_model.product_id == product_id))
+        cart_item = result.scalar_one_or_none()
+        if not cart_item:
+            raise ValueError( "This product is not in your cart")
+        cart_item.quantity = quantity
+        db.add(cart_item)
+        await db.commit()
+        await db.refresh(cart_item)
+        return cart_item
+
+
+    
+    async def remove_from_cart(self,db: AsyncSession,user_id: int,product_id: int,cart_model,cart_item_model):
+        result = await db.execute(
+            select(cart_item_model)
+            .join(cart_model, cart_item_model.cart_id == cart_model.id)
+            .where(
+                cart_model.user_id == user_id,
+                cart_item_model.product_id == product_id
+            )
+        )
+
+        cart_item = result.scalar_one_or_none()
+
+        if not cart_item:
+            raise ValueError("Product is not in your cart.")
+
+        await db.delete(cart_item)
+        await db.commit()
+
+        return cart_item  
 class Base(DeclarativeBase):
     pass
 

@@ -28,6 +28,8 @@ class EcommerceRequest(BaseModel):
         "add_to_cart",
         "buy_product",
         "get_cart",
+        "remove_from_cart",
+        "update_cart",
         "general"
     ]
 

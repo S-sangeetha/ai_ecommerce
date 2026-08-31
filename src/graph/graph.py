@@ -2,7 +2,7 @@ from langgraph.graph import StateGraph, START, END
 
 from src.graph.state import EcommerceState , EcommerceContext
 from src.graph.nodes import  nodes_graph
-
+from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 
 def route_by_intent(state: EcommerceState):
 
@@ -16,8 +16,16 @@ def route_by_intent(state: EcommerceState):
 
         if intent == "buy_product":
             return "buy_product"
+        
         if intent == "get_cart":
           return "get_cart"
+        
+        if intent == "remove_from_cart":
+            return "remove_from_cart"
+
+        if intent == "update_cart":
+            return "update_cart"
+        
         return "general"
 
 def route_after_search(state: EcommerceState):
@@ -37,13 +45,15 @@ def route_after_product(state: EcommerceState):
 
     if state["intent"] == "add_to_cart":
         return "add_product_to_cart"
-
     if state["intent"] == "buy_product":
         return "create_order"
-
+    if state["intent"] == "remove_from_cart":
+        return "remove_from_cart"
+    if state["intent"] == "update_cart":
+       return "update_cart"
     return "fallback"
 
-def create_graph():
+def create_graph(checkpointer):
     graph = StateGraph(EcommerceState,context_schema=EcommerceContext)
     graph.add_node(
         "understand_query",
@@ -83,7 +93,10 @@ def create_graph():
         "limited_results",
         nodes_graph.limited_results
     )
-
+    graph.add_node(
+        "remove_from_cart",
+        nodes_graph.remove_from_cart
+    )
     graph.add_node(
         "fallback",
         nodes_graph.fallback
@@ -93,8 +106,11 @@ def create_graph():
         "general",
         nodes_graph.general
     )
-
-
+    graph.add_node(
+    "update_cart",
+    nodes_graph.update_cart
+)
+    
     graph.add_edge(
         START,
         "understand_query"
@@ -109,6 +125,8 @@ def create_graph():
             "add_to_cart": "find_product",
             "buy_product": "find_product",
             "get_cart": "get_cart",
+            "remove_from_cart": "find_product",
+            "update_cart": "find_product",
             "general": "general"
         }
     )
@@ -130,6 +148,8 @@ def create_graph():
         {
             "add_product_to_cart": "add_product_to_cart",
             "create_order": "create_order",
+            "remove_from_cart" :"remove_from_cart",
+            "update_cart": "update_cart",
             "fallback": "fallback"
         }
     )
@@ -141,8 +161,10 @@ def create_graph():
     graph.add_edge("general", END)
     graph.add_edge("add_product_to_cart", END)
     graph.add_edge("create_order", END)
- 
+    graph.add_edge("remove_from_cart", END)
+    graph.add_edge("get_cart", END)
+    graph.add_edge("update_cart", END)
 
-    return graph.compile()
 
-ecommerce_graph = create_graph()
+    return graph.compile( checkpointer=checkpointer)
+

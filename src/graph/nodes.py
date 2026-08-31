@@ -42,28 +42,32 @@ class nodes:
         result = await request_llm.ainvoke(
 
               f"""Extract structured information from this ecommerce request.
-
                 Intent MUST be exactly one of these values:
                 - product_search
                 - add_to_cart
                 - buy_product
                 - get_cart
+                - remove_from_cart
+                - update_cart
                 - general
-
                 Intent definitions:
-
                 product_search:
                 User wants to search, find, compare, or browse products.
-
                 add_to_cart:
                 User wants to add a product to their cart.
-
                 buy_product:
                 User wants to directly purchase a product.
-
                 get_cart:
                 User wants to view their existing shopping cart.
-
+                remove_from_cart:
+                User wants to delete the products in their existing shopping cart
+                6. update_cart
+                User wants to change the quantity of a product already in their cart.
+                For update_cart:
+                - Extract the product name/query.
+                - Extract the NEW quantity requested by the user.
+                For remove_from_cart:
+                - Extract the product name/query.
                 Examples of get_cart:
                 - Show my cart
                 - View my cart
@@ -72,10 +76,8 @@ class nodes:
                 - Show cart
                 - View cart
                 - Cart
-
                 general:
                 Anything unrelated to product search or shopping actions.
-
                 Extract:
                 - intent
                 - product_query
@@ -85,7 +87,6 @@ class nodes:
                 - category
                 - min_price
                 - max_price
-
                 IMPORTANT:
                 - For get_cart, product_query must be null.
                 - For get_cart, name must be null.
@@ -94,14 +95,11 @@ class nodes:
                 - For get_cart, min_price must be null.
                 - For get_cart, max_price must be null.
                 - Do not invent values.
-
-                IMPORTANT:
                 - category must contain only the product type.
                 - product_query must contain only the meaningful
                 semantic requirement for product matching.
                 - Do not repeat brand, category, or price inside product_query.
                 - If there is no semantic requirement, set product_query to null.
-
                 User request:
                 {user_query}
                 """
@@ -323,7 +321,7 @@ class nodes:
         filters = state["filters"]
         print("FIND PRODUCT FILTERS:", filters)
         print("FIND PRODUCT QUERY:", filters.get("query"))
-        product_name = filters.get("name") or filters.get("query")
+        product_name = filters.get("query") or filters.get("name")
 
         if not product_name:
             return {
@@ -446,7 +444,74 @@ class nodes:
         }
     
 
+    async def remove_from_cart( self,state: EcommerceState,runtime):
+        db = runtime.context["db"]
 
+        product_id = state.get("product_id")
+
+        if not product_id:
+            return {
+                "response": "I couldn't identify the product to remove."
+            }
+
+        try:
+            await cart_service.remove_from_cart(
+                db=db,
+                user_id=state["user_id"],
+                product_id=product_id
+            )
+
+            product = state["products"][0]
+
+            return {
+                "response": (
+                    f"Removed {product['name']} from your cart."
+                ),
+                "data": {
+                    "action": "remove_from_cart",
+                    "product_id": product["id"],
+                    "product_name": product["name"]
+                }
+            }
+
+        except ValueError as error:
+            return {
+                "response": str(error)
+            }
+    async def update_cart(self, state: EcommerceState,runtime):
+        try:
+            cart_item = await cart_service.update_cart(
+                db=runtime.context["db"],
+                user_id=state["user_id"],
+                product_id=state["product_id"],
+                quantity=state["quantity"],
+            )
+
+            product = state["products"][0]
+
+            total = float(product["price"]) * state["quantity"]
+
+            return {
+                "response": (
+                    f"Updated {product['name']} quantity "
+                    f"to {state['quantity']}. "
+                    f"Total: ₹{total:,.2f}."
+                ),
+                "data": {
+                    "action": "update_cart",
+                    "cart_item_id": cart_item.id,
+                    "product_id": product["id"],
+                    "product_name": product["name"],
+                    "quantity": state["quantity"],
+                    "price": product["price"],
+                    "total": total
+                }
+            }
+
+        except ValueError as error:
+            return {
+                "response": str(error)
+            }
     async def create_order(self, state: EcommerceState,runtime):
         try:
             order = await cart_service.create_order(
