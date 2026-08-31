@@ -29,7 +29,10 @@ class ProductService:
         return await database_service.create(db, product)
     
     async def search_products(self,db:AsyncSession , request : ProductSearchRequest):
-        search_embedding = await self.llm_config.create_embeddings(request.query)
+        search_embedding = None
+        if request.query:
+            search_embedding = await self.llm_config.create_embeddings(request.query)
+
         products = await database_service.search_products(db,Product,search_embedding,request)
 
         print("SEARCH RESULTS:", products)

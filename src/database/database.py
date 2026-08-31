@@ -4,7 +4,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, DeclarativeBase ,Session
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import (
     AsyncSession,
     async_sessionmaker,
@@ -36,21 +36,54 @@ class Database:
     async def get_user_by_email(self,  db: Session,email: str, User):
         statement = select(User).where(User.email == email)
         return await db.execute(statement).scalar_one_or_none()  
-
+    
     async def search_products(self,db: AsyncSession, model ,embeddings,request):
         query = select(model)
+        if request.name:
+            query = query.where( model.name.ilike(request.name.strip()))
         if request.brand:
-            query = query.where( model.brand.ilike(request.brand))
-        if request.category:
-            query = query.where(model.category.ilike(request.category))
-        if request.max_price is not None:
-            query = query.where( model.price <= request.max_price )
+            query = query.where( model.brand.ilike(request.brand.strip()))
 
-        result =  query.order_by(model.embedding.cosine_distance(embeddings)).limit(request.limit)
+        if request.category:
+            query = query.where( model.category.ilike(request.category.strip()))
+
+        if request.min_price is not None:
+            query = query.where(model.price >= request.min_price)
+
+        if request.max_price is not None:
+            query = query.where(model.price <= request.max_price)
+
+        if embeddings is not None:
+            query = query.order_by(model.embedding.cosine_distance(embeddings) )
+
+        query = query.limit(request.limit)
+
         result = await db.execute(query)
-        products =  result.scalars().all()
-       
-        return products
+
+        products = result.scalars().all()
+
+        if products:
+            return products
+        
+        fuzzy_query = select(model)
+        if request.name:
+            name = request.name.strip()
+            fuzzy_query = fuzzy_query.where(func.similarity(model.name, name) >= 0.3)
+        if request.brand:
+            brand = request.brand.strip()
+            fuzzy_query = fuzzy_query.where(func.similarity(model.brand, brand) >= 0.3)
+        if request.category:
+            category = request.category.strip()
+            fuzzy_query = fuzzy_query.where(func.similarity(model.category, category) >= 0.3)
+        if request.min_price is not None:
+             fuzzy_query = fuzzy_query.where( model.price >= request.min_price )
+        if request.max_price is not None:
+            fuzzy_query = fuzzy_query.where( model.price <= request.max_price )
+        if embeddings is not None:
+             fuzzy_query = fuzzy_query.order_by( model.embedding.cosine_distance(embeddings))
+        fuzzy_query = fuzzy_query.limit(request.limit)
+        result = await db.execute(fuzzy_query)
+        return result.scalars().all()
 
     async def add_to_cart(self,db:AsyncSession,user_id: int ,product_id: int, quantity: int  , cart_model , cart_item_model, product_model):
         if quantity <= 0:
@@ -101,14 +134,15 @@ class Database:
         result = await db.execute(
         select(product_model).where(
             product_model.id == product_id
-        )
+        ).with_for_update()
         )
 
         product = result.scalar_one_or_none()
 
         if not product:
             raise ValueError("Product not found")
-
+        if quantity <= 0:
+            raise ValueError("Quantity must be greater than 0")
         if product.stock < quantity:
             raise ValueError(
                 f"Only {product.stock} item(s) are available"
@@ -136,7 +170,75 @@ class Database:
       except Exception: 
         await db.rollback()
         raise
+
+      
+    async def get_cart(self,db: AsyncSession,user_id: int,cart_model,cart_item_model ,product_model ):
+        result = await db.execute(
+            select(cart_item_model, product_model)
+            .join(product_model, cart_item_model.product_id == product_model.id)
+            .join(cart_model, cart_item_model.cart_id == cart_model.id)
+            .where(cart_model.user_id == user_id)
+        )
+        await db.delete(cart_item_model)
+        await db.commit()
         
+        return 
+
+    async def clear_cart(self,db: AsyncSession,user_id: int,cart_model,cart_item_model ,product_model ):
+        result = await db.execute(
+            select(cart_item_model, product_model)
+            .join(product_model, cart_item_model.product_id == product_model.id)
+            .join(cart_model, cart_item_model.cart_id == cart_model.id)
+            .where(cart_model.user_id == user_id)
+        )
+
+        return result.all() 
+    
+    async def update_cart_quantity(self, db: AsyncSession, user_id: int,product_id: int,quantity: int,cart_model,cart_item_model,product_model):
+        if quantity <= 0:
+            raise ValueError("Quantity must be greater than 0")
+        
+        result = await db.execute(select(product_model).where(product_model.id == product_id) )
+        product = result.scalar_one_or_none()
+        if not product:
+            raise ValueError("Product not found")
+        if product.stock < quantity:
+            raise ValueError(f"Only {product.stock} units are available")
+        result = await db.execute(select(cart_model).where(cart_model.user_id == user_id))
+        cart = result.scalar_one_or_none()
+        if not cart:
+            raise ValueError("Your cart is empty")
+        result = await db.execute(select(cart_item_model).where(cart_item_model.cart_id == cart.id,cart_item_model.product_id == product_id))
+        cart_item = result.scalar_one_or_none()
+        if not cart_item:
+            raise ValueError( "This product is not in your cart")
+        cart_item.quantity = quantity
+        db.add(cart_item)
+        await db.commit()
+        await db.refresh(cart_item)
+        return cart_item
+
+
+    
+    async def remove_from_cart(self,db: AsyncSession,user_id: int,product_id: int,cart_model,cart_item_model):
+        result = await db.execute(
+            select(cart_item_model)
+            .join(cart_model, cart_item_model.cart_id == cart_model.id)
+            .where(
+                cart_model.user_id == user_id,
+                cart_item_model.product_id == product_id
+            )
+        )
+
+        cart_item = result.scalar_one_or_none()
+
+        if not cart_item:
+            raise ValueError("Product is not in your cart.")
+
+        await db.delete(cart_item)
+        await db.commit()
+
+        return cart_item  
 class Base(DeclarativeBase):
     pass
 

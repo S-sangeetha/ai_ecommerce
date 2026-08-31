@@ -2,18 +2,22 @@ from src.graph.state import EcommerceState
 from src.config.llm_config import llm_embedding
 from src.schemas.chat import ProductQuery
 from src.schemas.product import ProductSearchRequest
-from src.graph.state import IntentQuery,AddToCartQuery,BuyProductQuery
+from src.graph.state import EcommerceRequest
 from src.services.cart import cart_service
 from src.services.product import product_service
 
-structured_llm = llm_embedding.llm.with_structured_output(ProductQuery)
-intent_llm = llm_embedding.llm.with_structured_output(IntentQuery)
-add_to_cart_llm = llm_embedding.llm.with_structured_output(AddToCartQuery)
-buy_product_llm = llm_embedding.llm.with_structured_output(BuyProductQuery)
+# structured_llm = llm_embedding.llm.with_structured_output(ProductQuery)
+# intent_llm = llm_embedding.llm.with_structured_output(IntentQuery)
+# add_to_cart_llm = llm_embedding.llm.with_structured_output(AddToCartQuery)
+# buy_product_llm = llm_embedding.llm.with_structured_output(BuyProductQuery)
+
+request_llm = llm_embedding.llm.with_structured_output(
+    EcommerceRequest
+)
 class nodes:
     async def extract_buy_request(self, state: EcommerceState):
 
-        result = await buy_product_llm.ainvoke(
+        result = await request_llm.ainvoke(
             f"""
             Extract the product and quantity from this
             ecommerce purchase request.
@@ -35,37 +39,113 @@ class nodes:
         }
     async def understand_query(self , state : EcommerceState):
         user_query  = state['user_query']
-        result = await structured_llm.ainvoke(
+        result = await request_llm.ainvoke(
 
-            f"""
-            Understand this ecommerce product search query.
-            Extract:
-            - brand
-            - category
-            - maximum price
-            - semantic search query
-            User query:
-            {user_query}
-            """
+              f"""Extract structured information from this ecommerce request.
+                Intent MUST be exactly one of these values:
+                - product_search
+                - add_to_cart
+                - buy_product
+                - get_cart
+                - remove_from_cart
+                - update_cart
+                - general
+                Intent definitions:
+                product_search:
+                User wants to search, find, compare, or browse products.
+                add_to_cart:
+                User wants to add a product to their cart.
+                buy_product:
+                User wants to directly purchase a product.
+                get_cart:
+                User wants to view their existing shopping cart.
+                remove_from_cart:
+                User wants to delete the products in their existing shopping cart
+                6. update_cart
+                User wants to change the quantity of a product already in their cart.
+                For update_cart:
+                - Extract the product name/query.
+                - Extract the NEW quantity requested by the user.
+                For remove_from_cart:
+                - Extract the product name/query.
+                Examples of get_cart:
+                - Show my cart
+                - View my cart
+                - What's in my cart?
+                - What is in my cart?
+                - Show cart
+                - View cart
+                - Cart
+                general:
+                Anything unrelated to product search or shopping actions.
+                Extract:
+                - intent
+                - product_query
+                - quantity
+                - name
+                - brand
+                - category
+                - min_price
+                - max_price
+                IMPORTANT:
+                - For get_cart, product_query must be null.
+                - For get_cart, name must be null.
+                - For get_cart, brand must be null.
+                - For get_cart, category must be null.
+                - For get_cart, min_price must be null.
+                - For get_cart, max_price must be null.
+                - Do not invent values.
+                - category must contain only the product type.
+                - product_query must contain only the meaningful
+                semantic requirement for product matching.
+                - Do not repeat brand, category, or price inside product_query.
+                - If there is no semantic requirement, set product_query to null.
+                User request:
+                {user_query}
+                """
         )
 
         return {
-            "filters": { "query": result.query,"brand": result.brand,"category": result.category, "max_price": result.max_price}
+        "intent": result.intent,
+        "product_query": result.product_query,
+        "quantity": result.quantity if result.quantity > 0 else 1,
+        "filters": {
+            "query": result.product_query,
+            "name":result.name,
+            "brand": result.brand,
+            "category": result.category,
+            "min_price": result.min_price,
+            "max_price": result.max_price
+        }
         }
 
-    async def search_products(self ,state: EcommerceState):
-        db = state["db"]
+    async def search_products(self ,state: EcommerceState,runtime):
+        db = runtime.context["db"]
         filters = state["filters"]
         request = ProductSearchRequest(
-        query=filters["query"],
-        brand=filters["brand"],
-        category=filters["category"],
-        max_price=filters["max_price"],
+        query=filters.get("query"),
+        name = filters.get("name"),
+        brand=filters.get("brand"),
+        category=filters.get("category"),
+        max_price=filters.get("max_price"),
         limit=5 )
         
         result  = await product_service.search_products(db = db , request= request)
         products = result["products"]
-        return {"products": products}
+        product_data = [
+            {
+                "id": product.id,
+                "name": product.name,
+                "description": product.description,
+                "brand": product.brand,
+                "category": product.category,
+                "price": float(product.price),
+                "stock": product.stock
+            }
+            for product in products
+]
+
+        return {"products": product_data}
 
     
     async def generate_response(self , state: EcommerceState):
@@ -78,13 +158,11 @@ class nodes:
         product_details  = "\n".join(
             [
                 f"""
-                 Product: {product.name}
-                 Description: {product.description}
-                 Brand: {product.brand}
-                 Category: {product.category} 
-                 Price: ₹{product.price}
-                 Stock: {product.stock}
-                """
+                Product: {product["name"]}
+                Brand: {product["brand"]}
+                Category: {product["category"]}
+                Price: ₹{product["price"]}
+                Stock: {product["stock"]}                """
                 for product in products
             ]
         )
@@ -102,8 +180,21 @@ class nodes:
         - Mention the product name and price.
         """
         response = await llm_embedding.llm.ainvoke(prompt)
+        if isinstance(response.content, list):
+            response_text = "".join(
+                block.get("text", "")
+                for block in response.content
+                if isinstance(block, dict)
+        )
+        else:
+             response_text = str(response.content)
         print("LLM RESPONSE:", repr(response.content))
-        return { "response": response.content}
+        return { "response":response_text ,
+                "data": {
+                    "action": "product_search",
+            "count": len(products),
+            "products": products
+        }}
 
     
     async def fallback(self, state: EcommerceState):
@@ -118,18 +209,39 @@ class nodes:
 
         products = state["products"]
 
+        if not products:
+            return {
+                "response": "Sorry, I couldn't find any products matching your requirements.",
+                "data": {
+                    "action": "product_search",
+                    "count": 0,
+                    "products": []
+                }
+            }
+
+        product_list = "\n".join(
+        f"{i + 1}. {product['name']} — "
+        f"₹{product['price']:,.2f} "
+        f"({product['brand']}) — "
+        f"Stock: {product['stock']}"
+        for i, product in enumerate(products)
+    )
+
         return {
             "response": (
-                f"I found only {len(products)} products "
-                "matching your requirements."
-            )
+                f"I found {len(products)} products:\n\n"
+                f"{product_list}"
+            ),
+            "data": {
+                "count": len(products),
+                "products": products
+            }
         }
-    
     async def route_intent(self, state: EcommerceState):
 
         user_query = state["user_query"]
 
-        result = await intent_llm.ainvoke(
+        result = await request_llm.ainvoke(
             f"""
             Determine the intent of this ecommerce user query.
 
@@ -161,7 +273,7 @@ class nodes:
 
         user_query = state["user_query"]
 
-        result = await add_to_cart_llm.ainvoke(
+        result = await request_llm.ainvoke(
             f"""
             Extract the product and quantity from this ecommerce request.
 
@@ -197,21 +309,34 @@ class nodes:
             {user_query}
             """
         )
-
+        
         return {
-            "response": response.content
+            "response":  self.extract_text(response.content)
         }
-    async def find_product(self, state: EcommerceState):
+    async def find_product(self, state: EcommerceState,runtime):
 
-        db = state["db"]
+        db = runtime.context["db"]
+
 
         filters = state["filters"]
+        print("FIND PRODUCT FILTERS:", filters)
+        print("FIND PRODUCT QUERY:", filters.get("query"))
+        product_name = filters.get("query") or filters.get("name")
 
+        if not product_name:
+            return {
+                "products": [],
+                "response": "Please include the product name when placing an order."
+            }
         request = ProductSearchRequest(
-            query=filters["query"],
+            query=product_name,
+            brand=filters.get("brand"),
+            category=filters.get("category"),
+            min_price=filters.get("min_price"),
+            max_price=filters.get("max_price"),
             limit=1
         )
-
+ 
         result  = await product_service.search_products(
             db=db,
             request=request
@@ -230,48 +355,204 @@ class nodes:
         print("SELECTED PRODUCT:", product.id, product.name)
         return {
             "product_id": product.id,
-            "products": [product]
+            "products": [ {
+            "id": product.id,
+            "name": product.name,
+            "description": product.description,
+            "brand": product.brand,
+            "category": product.category,
+            "price": float(product.price),
+            "stock": product.stock
+        }]
         }
-    async def add_product_to_cart(self, state: EcommerceState):
-
-        print("PRODUCT ID:", state["product_id"])
-        print("QUANTITY:", state["quantity"])
-        print("USER ID:", state["user_id"])
+    async def add_product_to_cart(self, state: EcommerceState,runtime):
 
         try:
             item = await cart_service.add_to_cart(
-                db=state["db"],
+                db = runtime.context["db"],
                 user_id=state["user_id"],
                 product_id=state["product_id"],
                 quantity=state["quantity"]
             )
+            product = state["products"][0]
+            total =  product["price"] * state["quantity"]
 
-            print("CART ITEM:", item)
+            print("CART ITEM:", product)
 
             return {
                 "response": (
-                    f"Added {state['quantity']} item(s) "
-                    f"to your cart successfully."
-                )
+                       f"Added {state['quantity']} "
+                      f"{product['name']} to your cart successfully."
+                      
+                      f"for ₹{total:,.2f}."
+                ),
+                "data": {
+               "action": "add_to_cart",
+                "cart_item_id": item.id,
+                "product_id": product["id"],
+                "product_name": product["name"],
+                "quantity": state["quantity"],
+                "price": product["price"],
+                "total": total
+        }
             }
 
         except ValueError as e:
             return {
                 "response": str(e)
             }
-    async def create_order(self, state: EcommerceState):
 
-        order = await cart_service.create_order(
-            db=state["db"],
-            user_id=state["user_id"],
-            product_id=state["product_id"],
-            quantity=state["quantity"]
-        )
+    async def get_cart(self, state: EcommerceState,runtime):
+        db = runtime.context["db"]
+        items = await cart_service.get_cart(db=db,user_id=state["user_id"])
+        if not items :
+            return {
+            "response": "Your cart is empty.",
+            "data": {
+                "action": "get_cart",
+                "count": 0,
+                "items": [],
+                "total": 0
+            }
+        }
+        cart_items = []
+        total = 0
+        for cart_item, product in items:
+          item_total = float(product.price) * cart_item.quantity
+          total += item_total
+          cart_items.append({
+            "cart_item_id": cart_item.id,
+            "product_id": product.id,
+            "product_name": product.name,
+            "brand": product.brand,
+            "quantity": cart_item.quantity,
+            "price": float(product.price),
+            "item_total": item_total
+        })
 
         return {
             "response": (
-                f"Order placed successfully. "
-                f"Order ID: {order.id}"
-            )
+                f"You have {len(cart_items)} item(s) in your cart. "
+                f"Total: ₹{total:,.2f}"
+            ),
+            "data": {
+                "action": "get_cart",
+                "count": len(cart_items),
+                "items": cart_items,
+                "total": total
+            }
         }
+    
+
+    async def remove_from_cart( self,state: EcommerceState,runtime):
+        db = runtime.context["db"]
+
+        product_id = state.get("product_id")
+
+        if not product_id:
+            return {
+                "response": "I couldn't identify the product to remove."
+            }
+
+        try:
+            await cart_service.remove_from_cart(
+                db=db,
+                user_id=state["user_id"],
+                product_id=product_id
+            )
+
+            product = state["products"][0]
+
+            return {
+                "response": (
+                    f"Removed {product['name']} from your cart."
+                ),
+                "data": {
+                    "action": "remove_from_cart",
+                    "product_id": product["id"],
+                    "product_name": product["name"]
+                }
+            }
+
+        except ValueError as error:
+            return {
+                "response": str(error)
+            }
+    async def update_cart(self, state: EcommerceState,runtime):
+        try:
+            cart_item = await cart_service.update_cart(
+                db=runtime.context["db"],
+                user_id=state["user_id"],
+                product_id=state["product_id"],
+                quantity=state["quantity"],
+            )
+
+            product = state["products"][0]
+
+            total = float(product["price"]) * state["quantity"]
+
+            return {
+                "response": (
+                    f"Updated {product['name']} quantity "
+                    f"to {state['quantity']}. "
+                    f"Total: ₹{total:,.2f}."
+                ),
+                "data": {
+                    "action": "update_cart",
+                    "cart_item_id": cart_item.id,
+                    "product_id": product["id"],
+                    "product_name": product["name"],
+                    "quantity": state["quantity"],
+                    "price": product["price"],
+                    "total": total
+                }
+            }
+
+        except ValueError as error:
+            return {
+                "response": str(error)
+            }
+    async def create_order(self, state: EcommerceState,runtime):
+        try:
+            order = await cart_service.create_order(
+                db=runtime.context["db"],
+                user_id=state["user_id"],
+                product_id=state["product_id"],
+                quantity=state["quantity"]
+            )
+        except ValueError as error:
+            return {"response": str(error)}
+
+        product = state["products"][0]
+
+        total = product["price"] * state["quantity"]
+        return {
+            "response": (
+                f"Order placed successfully! "
+            f"Order ID: {order.id}. "
+            f"{product['name']} × {state['quantity']} "
+            f"for ₹{total:,.2f}."
+            ),
+             "data": {
+            "action": "create_order",
+            "order_id": order.id,
+            "product_id": product["id"],
+            "product_name": product["name"],
+            "quantity": state["quantity"],
+            "price": product["price"],
+            "total": total
+        }
+        }
+    def extract_text(self,content):
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            return "".join(
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict)
+            )
+
+        return str(content)
 nodes_graph = nodes()

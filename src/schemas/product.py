@@ -13,16 +13,26 @@ class ProductCreateRequest(BaseModel):
     category: str
     
 class ProductSearchRequest(BaseModel):
-
-    query: str
-
+    query: str | None = None
+    name:str | None =None
     brand: str | None = None
-
     category: str | None = None
+    
+    min_price: float | None = Field(
+        default=None,
+        ge=0
+    )
 
-    max_price: float | None = None
+    max_price: float | None = Field(
+        default=None,
+        ge=0
+    )
 
-    limit: int = 5 
+    limit: int = Field(
+        default=5,
+        ge=1,
+        le=20
+    )
 
 
 class ProductResponse(BaseModel):
