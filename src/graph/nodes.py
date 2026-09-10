@@ -5,7 +5,8 @@ from src.schemas.product import ProductSearchRequest
 from src.graph.state import EcommerceRequest
 from src.services.cart import cart_service
 from src.services.product import product_service
-
+from src.mcp.client import search_products as mcp_search_products 
+from src.mcp.client import add_to_cart as mcp_add_to_cart
 # structured_llm = llm_embedding.llm.with_structured_output(ProductQuery)
 # intent_llm = llm_embedding.llm.with_structured_output(IntentQuery)
 # add_to_cart_llm = llm_embedding.llm.with_structured_output(AddToCartQuery)
@@ -127,25 +128,28 @@ class nodes:
         name = filters.get("name"),
         brand=filters.get("brand"),
         category=filters.get("category"),
+        min_price=filters.get("min_price"),
         max_price=filters.get("max_price"),
         limit=5 )
         
-        result  = await product_service.search_products(db = db , request= request)
-        products = result["products"]
-        product_data = [
-            {
-                "id": product.id,
-                "name": product.name,
-                "description": product.description,
-                "brand": product.brand,
-                "category": product.category,
-                "price": float(product.price),
-                "stock": product.stock
+        result  = await mcp_search_products(
+        query=filters.get("query"),
+        name=filters.get("name"),
+        brand=filters.get("brand"),
+        category=filters.get("category"),
+        min_price=filters.get("min_price"),
+        max_price=filters.get("max_price"),
+        limit=5)
+    
+        if not result["success"]:
+            return {
+                "products": [],
+                 "error": result.get("error") or result.get("raw_response")
             }
-            for product in products
-]
-
-        return {"products": product_data}
+        products = result.get("products", [])
+        return {
+            "products": products
+    }
 
     
     async def generate_response(self , state: EcommerceState):
@@ -366,42 +370,57 @@ class nodes:
         }]
         }
     async def add_product_to_cart(self, state: EcommerceState,runtime):
-
         try:
-            item = await cart_service.add_to_cart(
-                db = runtime.context["db"],
-                user_id=state["user_id"],
-                product_id=state["product_id"],
-                quantity=state["quantity"]
-            )
-            product = state["products"][0]
-            total =  product["price"] * state["quantity"]
 
-            print("CART ITEM:", product)
+                result = await mcp_add_to_cart(
+                    user_id=state["user_id"],
+                    product_id=state["product_id"],
+                    quantity=state["quantity"]
+                )
 
-            return {
-                "response": (
-                       f"Added {state['quantity']} "
-                      f"{product['name']} to your cart successfully."
-                      
-                      f"for ₹{total:,.2f}."
-                ),
-                "data": {
-               "action": "add_to_cart",
-                "cart_item_id": item.id,
-                "product_id": product["id"],
-                "product_name": product["name"],
-                "quantity": state["quantity"],
-                "price": product["price"],
-                "total": total
-        }
-            }
+                print("========== MCP CART RESULT ==========")
+                print(result)
+                print("=====================================")
 
-        except ValueError as e:
-            return {
-                "response": str(e)
-            }
+                if not result.get("success"):
+                    return {
+                        "response": result.get(
+                            "error",
+                            "Unable to add product to cart."
+                        )
+                    }
 
+                product = state["products"][0]
+
+                total = product["price"] * state["quantity"]
+
+                return {
+                    "response": (
+                        f"Added {state['quantity']} "
+                        f"{product['name']} to your cart successfully."
+                        f"for ₹{total:,.2f}."
+                    ),
+                    "data": {
+                        "action": "add_to_cart",
+                        "cart_item_id": result["cart_item_id"],
+                        "product_id": product["id"],
+                        "product_name": product["name"],
+                        "quantity": state["quantity"],
+                        "price": product["price"],
+                        "total": total
+                    }
+                }
+
+        except Exception as e:
+                import traceback
+                print("========== ADD TO CART ERROR ==========")
+                traceback.print_exc()
+                print("=======================================")
+
+                return {
+                    "response": str(e),
+                    "error_type": type(e).__name__
+                }
     async def get_cart(self, state: EcommerceState,runtime):
         db = runtime.context["db"]
         items = await cart_service.get_cart(db=db,user_id=state["user_id"])

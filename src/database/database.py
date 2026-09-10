@@ -172,17 +172,17 @@ class Database:
         raise
 
       
-    async def get_cart(self,db: AsyncSession,user_id: int,cart_model,cart_item_model ,product_model ):
-        result = await db.execute(
-            select(cart_item_model, product_model)
-            .join(product_model, cart_item_model.product_id == product_model.id)
-            .join(cart_model, cart_item_model.cart_id == cart_model.id)
-            .where(cart_model.user_id == user_id)
-        )
-        await db.delete(cart_item_model)
-        await db.commit()
+    # async def get_cart(self,db: AsyncSession,user_id: int,cart_model,cart_item_model ,product_model ):
+    #     result = await db.execute(
+    #         select(cart_item_model, product_model)
+    #         .join(product_model, cart_item_model.product_id == product_model.id)
+    #         .join(cart_model, cart_item_model.cart_id == cart_model.id)
+    #         .where(cart_model.user_id == user_id)
+    #     )
+    #     await db.delete(cart_item_model)
+    #     await db.commit()
         
-        return 
+    #     return 
 
     async def clear_cart(self,db: AsyncSession,user_id: int,cart_model,cart_item_model ,product_model ):
         result = await db.execute(
